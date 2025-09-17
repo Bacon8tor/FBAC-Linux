@@ -21,10 +21,10 @@ from enum import IntEnum
 
 class SMEMDataType(IntEnum):
     """Shared memory data types as defined in RTTNetData.h"""
-    FLIGHT_DATA = 0
-    FLIGHT_DATA2 = 1
-    OSB_DATA = 2
-    INTELLIVIBE_DATA = 3
+    FLIGHT_DATA = 0    # F4 in ESP32 code
+    FLIGHT_DATA2 = 1   # BMS in ESP32 code
+    OSB_DATA = 2       # OSB in ESP32 code
+    INTELLIVIBE_DATA = 3  # IVIBE in ESP32 code
 
 
 @dataclass
@@ -233,6 +233,8 @@ class FalconBMSMulticastClient:
         self.flight_data2: Dict[str, Any] = {}
         self.last_sequence = 0
         self.first_packet_received = False
+        self.last_packet_time = 0
+        self.udp_timeout = 5.0  # 5 seconds timeout like ESP32
 
         # Threading
         self.multicast_thread = None
@@ -391,11 +393,15 @@ class FalconBMSMulticastClient:
     def _multicast_loop(self):
         """Main loop for receiving multicast data"""
         print("✓ Multicast receive loop started - listening for BMS data...")
+        self.last_packet_time = time.time()  # Initialize timing
 
         while self.running:
             try:
                 # Receive multicast packet
                 data, addr = self.socket.recvfrom(65536)  # Max UDP packet size
+
+                # Update packet timing
+                self.last_packet_time = time.time()
 
                 # Show first packet received message
                 if not self.first_packet_received:
@@ -407,9 +413,13 @@ class FalconBMSMulticastClient:
                 if not header:
                     continue
 
+                if self.debug:
+                    print(f"Got SHM packet: Version={header.version}, Seq={header.sequence}, Type={header.data_type}, Size={len(data)}")
+
                 # Check sequence (detect out-of-order packets)
                 if header.sequence <= self.last_sequence:
-                    print(f"Out-of-order packet: seq={header.sequence}, last={self.last_sequence}")
+                    if self.debug:
+                        print(f"Out-of-order packet: seq={header.sequence}, last={self.last_sequence}")
                     continue
 
                 self.last_sequence = header.sequence
@@ -424,6 +434,9 @@ class FalconBMSMulticastClient:
                     self._parse_intellivibe_data(payload)
 
             except socket.timeout:
+                # Check if we haven't received packets for too long (like ESP32)
+                if self.first_packet_received and time.time() - self.last_packet_time > self.udp_timeout:
+                    print(f"✗ No packets received for {self.udp_timeout}s - connection may be lost")
                 continue  # Normal timeout, check running flag
             except Exception as e:
                 if self.running:
@@ -440,7 +453,12 @@ class FalconBMSMulticastClient:
             return None
 
         version = data[3]
-        sequence = struct.unpack('<I', data[4:8])[0]  # Little-endian uint32
+        if version != 1:
+            if self.debug:
+                print(f"Unsupported multicast version: {version}")
+            return None
+
+        sequence = struct.unpack('<I', data[4:8])[0]  # Little-endian uint32 (matches ESP32)
         data_type = data[8]
 
         return MulticastHeader(
