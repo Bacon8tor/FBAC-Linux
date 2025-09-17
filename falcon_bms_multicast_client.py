@@ -39,29 +39,67 @@ class MulticastHeader:
 class FlightDataParser:
     """Parser for FlightData structure from BMS shared memory"""
 
-    # FlightData structure layout (based on FlightData.h)
+    # Complete FlightData structure layout (based on FlightData.h)
+    # Total size should be approximately 2348 bytes
     FLIGHT_DATA_FORMAT = (
-        'f' * 3 +      # x, y, z (position)
-        'f' * 3 +      # xDot, yDot, zDot (velocity)
-        'f' * 6 +      # alpha, beta, gamma, pitch, roll, yaw
+        # Basic position and attitude data (12 floats = 48 bytes)
+        'f' * 12 +     # x, y, z, xDot, yDot, zDot, alpha, beta, gamma, pitch, roll, yaw
+
+        # Engine and flight data (7 floats = 28 bytes)
         'f' * 7 +      # mach, kias, vt, gs, windOffset, nozzlePos, internalFuel
+
+        # More engine data (4 floats = 16 bytes)
         'f' * 4 +      # externalFuel, fuelFlow, rpm, ftit
+
+        # Gear and systems (3 floats = 12 bytes)
         'f' * 3 +      # gearPos, speedBrake, epuFuel, oilPressure
-        'I' +          # lightBits (unsigned int)
+
+        # Light bits (1 uint32 = 4 bytes)
+        'I' +          # lightBits
+
+        # Head position (3 floats = 12 bytes)
         'f' * 3 +      # headPitch, headRoll, headYaw
+
+        # More light bits (2 uint32 = 8 bytes)
         'I' * 2 +      # lightBits2, lightBits3
+
+        # Chaff/Flare (2 floats = 8 bytes)
         'f' * 2 +      # ChaffCount, FlareCount
+
+        # Gear positions (3 floats = 12 bytes)
         'f' * 3 +      # NoseGearPos, LeftGearPos, RightGearPos
+
+        # ADI values (2 floats = 8 bytes)
         'f' * 2 +      # AdiIlsHorPos, AdiIlsVerPos
+
+        # HSI states (3 int32 = 12 bytes)
         'i' * 3 +      # courseState, headingState, totalStates
-        'f' * 9 +      # HSI values
+
+        # HSI values (9 floats = 36 bytes)
+        'f' * 9 +      # courseDeviation through totalValues
+
+        # Trim values (3 floats = 12 bytes)
         'f' * 3 +      # TrimPitch, TrimRoll, TrimYaw
+
+        # HSI bits (1 uint32 = 4 bytes)
         'I' +          # hsiBits
+
+        # DED Lines (5 * 26 bytes = 130 bytes)
         '26s' * 5 +    # DEDLines[5][26]
+
+        # DED Invert (5 * 26 bytes = 130 bytes)
         '26s' * 5 +    # Invert[5][26]
+
+        # PFL Lines (5 * 26 bytes = 130 bytes)
         '26s' * 5 +    # PFLLines[5][26]
+
+        # PFL Invert (5 * 26 bytes = 130 bytes)
         '26s' * 5 +    # PFLInvert[5][26]
+
+        # TACAN channels (2 int32 = 8 bytes)
         'i' * 2 +      # UFCTChan, AUXTChan
+
+        # RWR data (1 int32 + 40*6 values = 964 bytes)
         'i' +          # RwrObjectCount
         'i' * 40 +     # RWRsymbol[40]
         'f' * 40 +     # bearing[40]
@@ -70,39 +108,117 @@ class FlightDataParser:
         'L' * 40 +     # selected[40]
         'f' * 40 +     # lethality[40]
         'L' * 40 +     # newDetection[40]
+
+        # Fuel values (3 floats = 12 bytes)
         'f' * 3 +      # fwd, aft, total
+
+        # Version and final fields (4 values = 16 bytes)
         'i' +          # VersionNum
         'f' * 3 +      # headX, headY, headZ
         'i'            # MainPower
     )
 
+    # Expected total size (for validation)
+    EXPECTED_SIZE = struct.calcsize('<' + ''.join(FLIGHT_DATA_FORMAT))
+
 
 class FlightData2Parser:
     """Parser for FlightData2 structure"""
 
-    # Simplified FlightData2 format (key fields)
+    # Complete FlightData2 structure layout (based on FlightData.h)
+    # This structure has grown significantly in BMS 4.35+
     FLIGHT_DATA2_FORMAT = (
+        # VERSION 1 - Initial engine data (4 floats + 1 byte + 1 float + 2 bytes)
         'f' * 4 +      # nozzlePos2, rpm2, ftit2, oilPressure2
-        'B' +          # navMode
-        'f' +          # AAUZ
-        'B' * 2 +      # tacanInfo[2]
+        'B' +          # navMode (NavModes enum)
+        'f' +          # AAUZ (barometric altitude)
+        'B' * 2 +      # tacanInfo[2] (band/mode for UFC and AUX)
+
+        # VERSION 2/7 - Altimeter and power systems
         'i' +          # AltCalReading
         'I' * 4 +      # altBits, powerBits, blinkBits, cmdsMode
         'i' * 2 +      # uhf_panel_preset, uhf_panel_frequency
+
+        # VERSION 3 - Additional systems
         'f' * 3 +      # cabinAlt, hydPressureA, hydPressureB
-        'i' * 2 +      # currentTime, vehicleACD, VersionNum
+        'i' +          # currentTime (seconds in day)
+        'h' +          # vehicleACD (aircraft type index)
+        'i' +          # VersionNum
+
+        # VERSION 4 - Additional fuel flow
         'f' +          # fuelFlow2
-        # ... more fields as needed
+
+        # VERSION 5/8 - RWR and flight surfaces (512 + 2 floats)
+        '512s' +       # RwrInfo[512] - Raw RWR data
+        'f' * 2 +      # lefPos, tefPos
+
+        # VERSION 6 - VTOL
+        'f' +          # vtolPos
+
+        # VERSION 9 - Multiplayer pilot info
+        'B' +          # pilotsOnline
+        '12s' * 32 +   # pilotsCallsign[32][12]
+        'B' * 32 +     # pilotsStatus[32]
+
+        # VERSION 10 - Taxi effects
+        'f' +          # bumpIntensity
+
+        # VERSION 11 - GPS coordinates
+        'f' * 2 +      # latitude, longitude
+
+        # VERSION 12 - RTT (render-to-texture) info
+        'H' * 2 +      # RTT_size[2] (width, height)
+        'H' * 28 +     # RTT_area[7][4] (left, top, right, bottom for each area)
+
+        # VERSION 13 - IFF backup digits
+        'b' * 4 +      # iffBackupMode1Digit1/2, iffBackupMode3ADigit1/2
+
+        # VERSION 14 - Instrument lighting
+        'B' +          # instrLight
+
+        # VERSION 15 - Betty, misc bits, radar alt, bingo, bullseye, version info
+        'I' * 2 +      # bettyBits, miscBits
+        'f' * 5 +      # RALT, bingoFuel, caraAlow, bullseyeX, bullseyeY
+        'i' * 4 +      # BMSVersionMajor/Minor/Micro, BMSBuildNumber
+        'I' * 3 +      # StringAreaSize, StringAreaTime, DrawingAreaSize
+
+        # VERSION 16 - Turn rate
+        'f' +          # turnRate
+
+        # VERSION 18 - Flood console lighting
+        'B' +          # floodConsole
+
+        # VERSION 19 - Magnetic deviation and ECM
+        'f' * 2 +      # magDeviationSystem, magDeviationReal
+        'I' * 5 +      # ecmBits[5] - ECM program states
+        'B' +          # ecmOper (ECM operator state)
+        'B' * 40 +     # RWRjammingStatus[40] - Jamming status for each RWR object
+
+        # VERSION 20 - Radio 2 and IFF transponder
+        'i' * 2 +      # radio2_preset, radio2_frequency
+        'b' +          # iffTransponderActiveCode1
+        'h' * 4 +      # iffTransponderActiveCode2/3A/C/4
+
+        # VERSION 21 - TACAN ILS
+        'i' +          # tacan_ils_frequency
+
+        # VERSION 22 - RTT FPS and side slip
+        'i' +          # desired_RTT_FPS
+        'f'            # sideSlipdeg
     )
+
+    # Expected total size (for validation)
+    EXPECTED_SIZE = struct.calcsize('<' + ''.join(FLIGHT_DATA2_FORMAT))
 
 
 class FalconBMSMulticastClient:
     """Main client class for receiving BMS multicast data and communicating with Arduino"""
 
-    def __init__(self, multicast_group: str, port: int, arduino_port: str = None):
+    def __init__(self, multicast_group: str, port: int, arduino_port: str = None, debug: bool = False):
         self.multicast_group = multicast_group
         self.port = port
         self.arduino_port = arduino_port
+        self.debug = debug
 
         # Multicast socket
         self.socket = None
@@ -196,7 +312,7 @@ class FalconBMSMulticastClient:
                 port=self.arduino_port,
                 baudrate=115200,
                 parity=serial.PARITY_NONE,
-                databits=8,
+                bytesize=8,
                 stopbits=serial.STOPBITS_ONE,
                 timeout=1.0,
                 write_timeout=1.0
@@ -220,24 +336,49 @@ class FalconBMSMulticastClient:
     def _arduino_handshake(self) -> bool:
         """Perform handshake with Arduino (matches ArduinoConnector.cs)"""
         try:
+            # Clear any existing data in the buffer
+            self.arduino_serial.reset_input_buffer()
+            self.arduino_serial.reset_output_buffer()
+
             # Send handshake byte 0xA5
             self.arduino_serial.write(bytes([0xA5]))
-            print("Sent handshake byte (0xA5)")
+            self.arduino_serial.flush()  # Ensure data is sent
+
+            if self.debug:
+                print("Sent handshake")
 
             # Wait for response 0x5A
             start_time = time.time()
-            while time.time() - start_time < 1.0:  # 1 second timeout
+            received_bytes = []
+
+            while time.time() - start_time < 3.0:  # 3 second timeout
                 if self.arduino_serial.in_waiting > 0:
-                    response = self.arduino_serial.read(1)[0]
-                    if response == 0x5A:
-                        print("Handshake successful! Received 0x5A")
-                        return True
-                    else:
-                        print(f"Unexpected handshake response: 0x{response:02X}")
-                        return False
+                    response_byte = self.arduino_serial.read(1)
+                    if len(response_byte) > 0:
+                        response = response_byte[0]
+                        received_bytes.append(response)
+
+                        if self.debug:
+                            print(f"Received byte: 0x{response:02X} ('{chr(response) if 32 <= response <= 126 else '?'}')")
+
+                        if response == 0x5A:
+                            print("Handshake successful!")
+                            return True
+                        elif len(received_bytes) > 10:  # Avoid infinite loop
+                            if self.debug:
+                                print(f"Too many unexpected bytes received: {[hex(b) for b in received_bytes]}")
+                            break
+
                 time.sleep(0.01)
 
-            print("Handshake timeout - no response from Arduino")
+            if received_bytes:
+                if self.debug:
+                    print(f"All received bytes: {[hex(b) for b in received_bytes]}")
+                    print(f"As ASCII: {''.join(chr(b) if 32 <= b <= 126 else '?' for b in received_bytes)}")
+                print("Handshake failed - unexpected response from Arduino")
+            else:
+                print("Handshake timeout - no response from Arduino")
+
             return False
 
         except Exception as e:
@@ -301,251 +442,409 @@ class FalconBMSMulticastClient:
         )
 
     def _parse_flight_data(self, data: bytes):
-        """Parse FlightData structure"""
+        """Parse FlightData structure using complete field mapping"""
         try:
-            if len(data) < 200:  # Minimum size check
+            # Validate minimum expected size
+            if len(data) < FlightDataParser.EXPECTED_SIZE:
+                print(f"FlightData too small: {len(data)} < {FlightDataParser.EXPECTED_SIZE}")
                 return
 
-            # Parse position and attitude (first 12 floats)
-            pos_att = struct.unpack('<12f', data[0:48])
+            offset = 0
+
+            # Basic position and attitude data (12 floats = 48 bytes)
+            pos_att = struct.unpack('<12f', data[offset:offset+48])
             self.flight_data.update({
                 'x': pos_att[0], 'y': pos_att[1], 'z': pos_att[2],
                 'xDot': pos_att[3], 'yDot': pos_att[4], 'zDot': pos_att[5],
                 'alpha': pos_att[6], 'beta': pos_att[7], 'gamma': pos_att[8],
                 'pitch': pos_att[9], 'roll': pos_att[10], 'yaw': pos_att[11]
             })
+            offset += 48
 
-            # Parse engine and flight data (next floats)
-            engine_data = struct.unpack('<8f', data[48:80])
+            # Engine and flight data (7 floats = 28 bytes)
+            engine_data = struct.unpack('<7f', data[offset:offset+28])
             self.flight_data.update({
                 'mach': engine_data[0], 'kias': engine_data[1], 'vt': engine_data[2],
                 'gs': engine_data[3], 'windOffset': engine_data[4], 'nozzlePos': engine_data[5],
-                'internalFuel': engine_data[6], 'externalFuel': engine_data[7]
+                'internalFuel': engine_data[6]
             })
+            offset += 28
 
-            # Parse more engine data
-            engine_data2 = struct.unpack('<4f', data[80:96])
+            # More engine data (4 floats = 16 bytes)
+            engine_data2 = struct.unpack('<4f', data[offset:offset+16])
             self.flight_data.update({
-                'fuelFlow': engine_data2[0], 'rpm': engine_data2[1], 'ftit': engine_data2[2],
-                'gearPos': engine_data2[3]
+                'externalFuel': engine_data2[0], 'fuelFlow': engine_data2[1],
+                'rpm': engine_data2[2], 'ftit': engine_data2[3]
             })
+            offset += 16
 
-            # Parse remaining floats
-            misc_data = struct.unpack('<3f', data[96:108])
+            # Gear and systems (3 floats = 12 bytes)
+            gear_sys = struct.unpack('<3f', data[offset:offset+12])
             self.flight_data.update({
-                'speedBrake': misc_data[0], 'epuFuel': misc_data[1], 'oilPressure': misc_data[2]
+                'gearPos': gear_sys[0], 'speedBrake': gear_sys[1], 'epuFuel': gear_sys[2]
             })
+            offset += 12
 
-            # Parse lightBits (uint32)
-            if len(data) >= 112:
-                lightbits = struct.unpack('<I', data[108:112])[0]
-                self.flight_data['lightBits'] = lightbits
+            # Oil pressure (1 float = 4 bytes) - this was missed in the previous parsing
+            oil_pressure = struct.unpack('<f', data[offset:offset+4])[0]
+            self.flight_data['oilPressure'] = oil_pressure
+            offset += 4
 
-            # Skip head position floats (12 bytes)
-            offset = 124
+            # Light bits (1 uint32 = 4 bytes)
+            lightbits = struct.unpack('<I', data[offset:offset+4])[0]
+            self.flight_data['lightBits'] = lightbits
+            offset += 4
 
-            # Parse lightBits2 and lightBits3
-            if len(data) >= offset + 8:
-                light_bits_23 = struct.unpack('<II', data[offset:offset+8])
-                self.flight_data.update({
-                    'lightBits2': light_bits_23[0],
-                    'lightBits3': light_bits_23[1]
-                })
-                offset += 8
+            # Head position (3 floats = 12 bytes)
+            head_pos = struct.unpack('<3f', data[offset:offset+12])
+            self.flight_data.update({
+                'headPitch': head_pos[0], 'headRoll': head_pos[1], 'headYaw': head_pos[2]
+            })
+            offset += 12
 
-            # Parse chaff and flare counts
-            if len(data) >= offset + 8:
-                counts = struct.unpack('<ff', data[offset:offset+8])
-                self.flight_data.update({
-                    'chaffCount': counts[0],
-                    'flareCount': counts[1]
-                })
-                offset += 8
+            # More light bits (2 uint32 = 8 bytes)
+            light_bits_23 = struct.unpack('<2I', data[offset:offset+8])
+            self.flight_data.update({
+                'lightBits2': light_bits_23[0], 'lightBits3': light_bits_23[1]
+            })
+            offset += 8
 
-            # Parse gear positions
+            # Chaff/Flare (2 floats = 8 bytes)
+            counts = struct.unpack('<2f', data[offset:offset+8])
+            self.flight_data.update({
+                'chaffCount': counts[0], 'flareCount': counts[1]
+            })
+            offset += 8
+
+            # Gear positions (3 floats = 12 bytes)
+            gear_pos = struct.unpack('<3f', data[offset:offset+12])
+            self.flight_data.update({
+                'noseGearPos': gear_pos[0], 'leftGearPos': gear_pos[1], 'rightGearPos': gear_pos[2]
+            })
+            offset += 12
+
+            # ADI values (2 floats = 8 bytes)
+            adi_values = struct.unpack('<2f', data[offset:offset+8])
+            self.flight_data.update({
+                'adiIlsHorPos': adi_values[0], 'adiIlsVerPos': adi_values[1]
+            })
+            offset += 8
+
+            # HSI states (3 int32 = 12 bytes)
+            hsi_states = struct.unpack('<3i', data[offset:offset+12])
+            self.flight_data.update({
+                'courseState': hsi_states[0], 'headingState': hsi_states[1], 'totalStates': hsi_states[2]
+            })
+            offset += 12
+
+            # HSI values (9 floats = 36 bytes)
+            hsi_values = struct.unpack('<9f', data[offset:offset+36])
+            self.flight_data.update({
+                'courseDeviation': hsi_values[0], 'desiredCourse': hsi_values[1],
+                'distanceToBeacon': hsi_values[2], 'bearingToBeacon': hsi_values[3],
+                'currentHeading': hsi_values[4], 'desiredHeading': hsi_values[5],
+                'deviationLimit': hsi_values[6], 'halfDeviationLimit': hsi_values[7],
+                'localizerCourse': hsi_values[8]
+            })
+            offset += 36
+
+            # Skip airbaseX, airbaseY, totalValues (would be 3 more floats)
             if len(data) >= offset + 12:
-                gear_pos = struct.unpack('<fff', data[offset:offset+12])
+                airbase_values = struct.unpack('<3f', data[offset:offset+12])
                 self.flight_data.update({
-                    'noseGearPos': gear_pos[0],
-                    'leftGearPos': gear_pos[1],
-                    'rightGearPos': gear_pos[2]
+                    'airbaseX': airbase_values[0], 'airbaseY': airbase_values[1],
+                    'totalValues': airbase_values[2]
                 })
                 offset += 12
 
-            # Skip ADI values (8 bytes) and HSI states (12 bytes)
-            offset += 20
+            # Trim values (3 floats = 12 bytes)
+            trim_values = struct.unpack('<3f', data[offset:offset+12])
+            self.flight_data.update({
+                'trimPitch': trim_values[0], 'trimRoll': trim_values[1], 'trimYaw': trim_values[2]
+            })
+            offset += 12
 
-            # Parse HSI values
-            if len(data) >= offset + 36:
-                hsi_values = struct.unpack('<9f', data[offset:offset+36])
-                self.flight_data.update({
-                    'courseDeviation': hsi_values[0],
-                    'desiredCourse': hsi_values[1],
-                    'distanceToBeacon': hsi_values[2],
-                    'bearingToBeacon': hsi_values[3],
-                    'currentHeading': hsi_values[4],
-                    'desiredHeading': hsi_values[5]
-                })
-                offset += 36
+            # HSI bits (1 uint32 = 4 bytes)
+            hsi_bits = struct.unpack('<I', data[offset:offset+4])[0]
+            self.flight_data['hsiBits'] = hsi_bits
+            offset += 4
 
-            # Skip trim values and hsiBits
-            offset += 16
+            # DED Lines (5 * 26 bytes = 130 bytes)
+            for i in range(5):
+                line_data = data[offset:offset+26]
+                ded_line = line_data.decode('ascii', errors='ignore').rstrip('\x00')
+                self.flight_data[f'DEDLine_{i}'] = ded_line
+                offset += 26
 
-            # Parse DED lines (5 lines of 26 chars each)
-            if len(data) >= offset + 260:  # 5 * 26 * 2 (DED + Invert)
-                for i in range(5):
-                    line_start = offset + (i * 26)
-                    invert_start = offset + 130 + (i * 26)
+            # DED Invert (5 * 26 bytes = 130 bytes)
+            for i in range(5):
+                invert_data = data[offset:offset+26]
+                self.flight_data[f'DEDInvert_{i}'] = invert_data
+                offset += 26
 
-                    ded_line = data[line_start:line_start+26].decode('ascii', errors='ignore').rstrip('\x00')
-                    ded_invert = data[invert_start:invert_start+26]
+            # PFL Lines (5 * 26 bytes = 130 bytes)
+            for i in range(5):
+                line_data = data[offset:offset+26]
+                pfl_line = line_data.decode('ascii', errors='ignore').rstrip('\x00')
+                self.flight_data[f'PFLLine_{i}'] = pfl_line
+                offset += 26
 
-                    self.flight_data[f'DEDLine_{i}'] = ded_line
-                    self.flight_data[f'DEDInvert_{i}'] = ded_invert
-                offset += 260
+            # PFL Invert (5 * 26 bytes = 130 bytes)
+            for i in range(5):
+                invert_data = data[offset:offset+26]
+                self.flight_data[f'PFLInvert_{i}'] = invert_data
+                offset += 26
 
-            # Parse PFL lines (5 lines of 26 chars each)
-            if len(data) >= offset + 260:
-                for i in range(5):
-                    line_start = offset + (i * 26)
-                    invert_start = offset + 130 + (i * 26)
-
-                    pfl_line = data[line_start:line_start+26].decode('ascii', errors='ignore').rstrip('\x00')
-                    pfl_invert = data[invert_start:invert_start+26]
-
-                    self.flight_data[f'PFLLine_{i}'] = pfl_line
-                    self.flight_data[f'PFLInvert_{i}'] = pfl_invert
-                offset += 260
-
-            # Skip TACAN channels
+            # TACAN channels (2 int32 = 8 bytes)
+            tacan_channels = struct.unpack('<2i', data[offset:offset+8])
+            self.flight_data.update({
+                'UFCTChan': tacan_channels[0], 'AUXTChan': tacan_channels[1]
+            })
             offset += 8
 
-            # Skip RWR data for now (large block)
-            # Parse fuel quantities at the end
-            fuel_offset = len(data) - 16  # Approximate location
-            if fuel_offset > 0 and len(data) >= fuel_offset + 12:
-                fuel_data = struct.unpack('<fff', data[fuel_offset:fuel_offset+12])
+            # RWR data (1 int32 + 40*6 values = 964 bytes)
+            rwr_count = struct.unpack('<i', data[offset:offset+4])[0]
+            self.flight_data['rwrObjectCount'] = rwr_count
+            offset += 4
+
+            # RWR arrays (40 elements each)
+            if len(data) >= offset + (40 * 24):  # 40 * (4+4+4+4+4+4)
+                rwr_symbol = list(struct.unpack('<40i', data[offset:offset+160]))
+                offset += 160
+                rwr_bearing = list(struct.unpack('<40f', data[offset:offset+160]))
+                offset += 160
+                rwr_missile_activity = list(struct.unpack('<40L', data[offset:offset+160]))
+                offset += 160
+                rwr_missile_launch = list(struct.unpack('<40L', data[offset:offset+160]))
+                offset += 160
+                rwr_selected = list(struct.unpack('<40L', data[offset:offset+160]))
+                offset += 160
+                rwr_lethality = list(struct.unpack('<40f', data[offset:offset+160]))
+                offset += 160
+                rwr_new_detection = list(struct.unpack('<40L', data[offset:offset+160]))
+                offset += 160
+
                 self.flight_data.update({
-                    'fwd': fuel_data[0],
-                    'aft': fuel_data[1],
-                    'total': fuel_data[2]
+                    'rwrSymbol': rwr_symbol, 'rwrBearing': rwr_bearing,
+                    'rwrMissileActivity': rwr_missile_activity, 'rwrMissileLaunch': rwr_missile_launch,
+                    'rwrSelected': rwr_selected, 'rwrLethality': rwr_lethality,
+                    'rwrNewDetection': rwr_new_detection
+                })
+
+            # Fuel values (3 floats = 12 bytes)
+            if len(data) >= offset + 12:
+                fuel_data = struct.unpack('<3f', data[offset:offset+12])
+                self.flight_data.update({
+                    'fwd': fuel_data[0], 'aft': fuel_data[1], 'total': fuel_data[2]
+                })
+                offset += 12
+
+            # Version and final fields (4 values = 16 bytes)
+            if len(data) >= offset + 16:
+                final_data = struct.unpack('<i3fi', data[offset:offset+16])
+                self.flight_data.update({
+                    'versionNum': final_data[0],
+                    'headX': final_data[1], 'headY': final_data[2], 'headZ': final_data[3],
+                    'mainPower': final_data[4]
                 })
 
         except Exception as e:
             print(f"Error parsing FlightData: {e}")
 
     def _parse_flight_data2(self, data: bytes):
-        """Parse FlightData2 structure"""
+        """Parse FlightData2 structure using complete field mapping"""
         try:
+            # Validate minimum expected size - allow partial parsing for older versions
             if len(data) < 50:
+                print(f"FlightData2 too small: {len(data)}")
                 return
 
             offset = 0
 
-            # Parse engine data
-            engine_data = struct.unpack('<ffff', data[offset:offset+16])
-            self.flight_data2.update({
-                'nozzlePos2': engine_data[0],
-                'rpm2': engine_data[1],
-                'ftit2': engine_data[2],
-                'oilPressure2': engine_data[3]
-            })
-            offset += 16
-
-            # Parse nav mode and AAUZ
-            if len(data) >= offset + 5:
-                nav_data = struct.unpack('<Bf', data[offset:offset+5])
+            # VERSION 1 - Initial engine data (4 floats + 1 byte + 1 float + 2 bytes)
+            if len(data) >= offset + 19:
+                engine_nav = struct.unpack('<4fBf2B', data[offset:offset+19])
                 self.flight_data2.update({
-                    'navMode': nav_data[0],
-                    'AAUZ': nav_data[1]
+                    'nozzlePos2': engine_nav[0], 'rpm2': engine_nav[1],
+                    'ftit2': engine_nav[2], 'oilPressure2': engine_nav[3],
+                    'navMode': engine_nav[4], 'AAUZ': engine_nav[5],
+                    'tacanInfo_UFC': engine_nav[6], 'tacanInfo_AUX': engine_nav[7]
                 })
-                offset += 5
+                offset += 19
 
-            # Skip tacan info (2 bytes)
-            offset += 2
-
-            # Parse altimeter and system bits
+            # VERSION 2/7 - Altimeter and power systems
             if len(data) >= offset + 20:
-                system_data = struct.unpack('<iIIII', data[offset:offset+20])
+                alt_power = struct.unpack('<i4I', data[offset:offset+20])
                 self.flight_data2.update({
-                    'altCalReading': system_data[0],
-                    'altBits': system_data[1],
-                    'powerBits': system_data[2],
-                    'blinkBits': system_data[3],
-                    'cmdsMode': system_data[4]
+                    'altCalReading': alt_power[0], 'altBits': alt_power[1],
+                    'powerBits': alt_power[2], 'blinkBits': alt_power[3],
+                    'cmdsMode': alt_power[4]
                 })
                 offset += 20
 
-            # Parse UHF data
             if len(data) >= offset + 8:
-                uhf_data = struct.unpack('<ii', data[offset:offset+8])
+                uhf_data = struct.unpack('<2i', data[offset:offset+8])
                 self.flight_data2.update({
-                    'uhf_panel_preset': uhf_data[0],
-                    'uhf_panel_frequency': uhf_data[1]
+                    'uhf_panel_preset': uhf_data[0], 'uhf_panel_frequency': uhf_data[1]
                 })
                 offset += 8
 
-            # Parse hydraulic and cabin data
-            if len(data) >= offset + 12:
-                fluid_data = struct.unpack('<fff', data[offset:offset+12])
+            # VERSION 3 - Additional systems
+            if len(data) >= offset + 16:
+                cabin_time = struct.unpack('<3fihi', data[offset:offset+16])
                 self.flight_data2.update({
-                    'cabinAlt': fluid_data[0],
-                    'hydPressureA': fluid_data[1],
-                    'hydPressureB': fluid_data[2]
+                    'cabinAlt': cabin_time[0], 'hydPressureA': cabin_time[1],
+                    'hydPressureB': cabin_time[2], 'currentTime': cabin_time[3],
+                    'vehicleACD': cabin_time[4], 'versionNum': cabin_time[5]
                 })
-                offset += 12
+                offset += 16
 
-            # Parse time and version
-            if len(data) >= offset + 12:
-                time_data = struct.unpack('<ihi', data[offset:offset+12])
-                self.flight_data2.update({
-                    'currentTime': time_data[0],
-                    'vehicleACD': time_data[1],
-                    'versionNum': time_data[2]
-                })
-                offset += 12
-
-            # Parse fuel flow 2
+            # VERSION 4 - Additional fuel flow
             if len(data) >= offset + 4:
                 fuel_flow2 = struct.unpack('<f', data[offset:offset+4])[0]
                 self.flight_data2['fuelFlow2'] = fuel_flow2
                 offset += 4
 
-            # Skip RWR info and other fields for now
-            # Look for instrument light and other fields at expected offsets
-            if len(data) >= 200:  # Rough estimate
-                try:
-                    # Try to find instrument light (should be a single byte)
-                    instr_offset = 180  # Approximate
-                    if len(data) > instr_offset:
-                        instr_light = data[instr_offset]
-                        self.flight_data2['instrLight'] = instr_light
+            # VERSION 5/8 - RWR and flight surfaces (512 + 2 floats)
+            if len(data) >= offset + 520:
+                rwr_info = data[offset:offset+512]
+                self.flight_data2['rwrInfo'] = rwr_info
+                offset += 512
 
-                    # Try to find flood console
-                    flood_offset = 220  # Approximate
-                    if len(data) > flood_offset:
-                        flood_console = data[flood_offset]
-                        self.flight_data2['floodConsole'] = flood_console
+                lef_tef = struct.unpack('<2f', data[offset:offset+8])
+                self.flight_data2.update({'lefPos': lef_tef[0], 'tefPos': lef_tef[1]})
+                offset += 8
 
-                    # Try to find ECM bits (array of 5 uint32)
-                    ecm_offset = 240  # Approximate
-                    if len(data) >= ecm_offset + 20:
-                        ecm_bits = list(struct.unpack('<5I', data[ecm_offset:ecm_offset+20]))
-                        self.flight_data2['ecmBits'] = ecm_bits
+            # VERSION 6 - VTOL
+            if len(data) >= offset + 4:
+                vtol_pos = struct.unpack('<f', data[offset:offset+4])[0]
+                self.flight_data2['vtolPos'] = vtol_pos
+                offset += 4
 
-                    # Try to find IFF backup digits
-                    iff_offset = 160  # Approximate
-                    if len(data) >= iff_offset + 4:
-                        iff_data = struct.unpack('<bbbb', data[iff_offset:iff_offset+4])
-                        self.flight_data2.update({
-                            'iffBackupMode1Digit1': iff_data[0],
-                            'iffBackupMode1Digit2': iff_data[1],
-                            'iffBackupMode3ADigit1': iff_data[2],
-                            'iffBackupMode3ADigit2': iff_data[3]
-                        })
+            # VERSION 9 - Multiplayer pilot info
+            if len(data) >= offset + 417:  # 1 + 32*12 + 32*1
+                pilots_online = struct.unpack('<B', data[offset:offset+1])[0]
+                self.flight_data2['pilotsOnline'] = pilots_online
+                offset += 1
 
-                except:
-                    pass  # Skip if can't parse optional fields
+                # Parse pilot callsigns
+                pilot_callsigns = []
+                for i in range(32):
+                    callsign_data = data[offset:offset+12]
+                    callsign = callsign_data.decode('ascii', errors='ignore').rstrip('\x00')
+                    pilot_callsigns.append(callsign)
+                    offset += 12
+                self.flight_data2['pilotsCallsign'] = pilot_callsigns
+
+                # Parse pilot statuses
+                pilot_statuses = list(struct.unpack('<32B', data[offset:offset+32]))
+                self.flight_data2['pilotsStatus'] = pilot_statuses
+                offset += 32
+
+            # VERSION 10 - Taxi effects
+            if len(data) >= offset + 4:
+                bump_intensity = struct.unpack('<f', data[offset:offset+4])[0]
+                self.flight_data2['bumpIntensity'] = bump_intensity
+                offset += 4
+
+            # VERSION 11 - GPS coordinates
+            if len(data) >= offset + 8:
+                gps_coords = struct.unpack('<2f', data[offset:offset+8])
+                self.flight_data2.update({'latitude': gps_coords[0], 'longitude': gps_coords[1]})
+                offset += 8
+
+            # VERSION 12 - RTT (render-to-texture) info
+            if len(data) >= offset + 60:  # 2*2 + 7*4*2
+                rtt_size = struct.unpack('<2H', data[offset:offset+4])
+                self.flight_data2['RTT_size'] = list(rtt_size)
+                offset += 4
+
+                # RTT areas (7 areas, 4 values each)
+                rtt_areas = []
+                for i in range(7):
+                    area = list(struct.unpack('<4H', data[offset:offset+8]))
+                    rtt_areas.append(area)
+                    offset += 8
+                self.flight_data2['RTT_area'] = rtt_areas
+
+            # VERSION 13 - IFF backup digits
+            if len(data) >= offset + 4:
+                iff_backup = struct.unpack('<4b', data[offset:offset+4])
+                self.flight_data2.update({
+                    'iffBackupMode1Digit1': iff_backup[0], 'iffBackupMode1Digit2': iff_backup[1],
+                    'iffBackupMode3ADigit1': iff_backup[2], 'iffBackupMode3ADigit2': iff_backup[3]
+                })
+                offset += 4
+
+            # VERSION 14 - Instrument lighting
+            if len(data) >= offset + 1:
+                instr_light = struct.unpack('<B', data[offset:offset+1])[0]
+                self.flight_data2['instrLight'] = instr_light
+                offset += 1
+
+            # VERSION 15 - Betty, misc bits, radar alt, bingo, bullseye, version info
+            if len(data) >= offset + 44:  # 2*4 + 5*4 + 4*4 + 3*4
+                betty_misc = struct.unpack('<2I5f4I3I', data[offset:offset+44])
+                self.flight_data2.update({
+                    'bettyBits': betty_misc[0], 'miscBits': betty_misc[1],
+                    'RALT': betty_misc[2], 'bingoFuel': betty_misc[3], 'caraAlow': betty_misc[4],
+                    'bullseyeX': betty_misc[5], 'bullseyeY': betty_misc[6],
+                    'BMSVersionMajor': betty_misc[7], 'BMSVersionMinor': betty_misc[8],
+                    'BMSVersionMicro': betty_misc[9], 'BMSBuildNumber': betty_misc[10],
+                    'StringAreaSize': betty_misc[11], 'StringAreaTime': betty_misc[12],
+                    'DrawingAreaSize': betty_misc[13]
+                })
+                offset += 44
+
+            # VERSION 16 - Turn rate
+            if len(data) >= offset + 4:
+                turn_rate = struct.unpack('<f', data[offset:offset+4])[0]
+                self.flight_data2['turnRate'] = turn_rate
+                offset += 4
+
+            # VERSION 18 - Flood console lighting
+            if len(data) >= offset + 1:
+                flood_console = struct.unpack('<B', data[offset:offset+1])[0]
+                self.flight_data2['floodConsole'] = flood_console
+                offset += 1
+
+            # VERSION 19 - Magnetic deviation and ECM
+            if len(data) >= offset + 49:  # 2*4 + 5*4 + 1 + 40*1
+                mag_ecm = struct.unpack('<2f5IB40B', data[offset:offset+49])
+                self.flight_data2.update({
+                    'magDeviationSystem': mag_ecm[0], 'magDeviationReal': mag_ecm[1]
+                })
+                self.flight_data2['ecmBits'] = list(mag_ecm[2:7])
+                self.flight_data2['ecmOper'] = mag_ecm[7]
+                self.flight_data2['RWRjammingStatus'] = list(mag_ecm[8:])
+                offset += 49
+
+            # VERSION 20 - Radio 2 and IFF transponder
+            if len(data) >= offset + 19:  # 2*4 + 1 + 4*2
+                radio_iff = struct.unpack('<2ib4h', data[offset:offset+19])
+                self.flight_data2.update({
+                    'radio2_preset': radio_iff[0], 'radio2_frequency': radio_iff[1],
+                    'iffTransponderActiveCode1': radio_iff[2],
+                    'iffTransponderActiveCode2': radio_iff[3],
+                    'iffTransponderActiveCode3A': radio_iff[4],
+                    'iffTransponderActiveCodeC': radio_iff[5],
+                    'iffTransponderActiveCode4': radio_iff[6]
+                })
+                offset += 19
+
+            # VERSION 21 - TACAN ILS
+            if len(data) >= offset + 4:
+                tacan_ils = struct.unpack('<i', data[offset:offset+4])[0]
+                self.flight_data2['tacan_ils_frequency'] = tacan_ils
+                offset += 4
+
+            # VERSION 22 - RTT FPS and side slip
+            if len(data) >= offset + 8:
+                fps_slip = struct.unpack('<if', data[offset:offset+8])
+                self.flight_data2.update({
+                    'desired_RTT_FPS': fps_slip[0], 'sideSlipdeg': fps_slip[1]
+                })
+                offset += 8
 
         except Exception as e:
             print(f"Error parsing FlightData2: {e}")
@@ -569,7 +868,8 @@ class FalconBMSMulticastClient:
                 if self.arduino_serial.in_waiting > 0:
                     # Read command from Arduino
                     command = self.arduino_serial.read(1)[0]
-                    print(f"Received Arduino command: 0x{command:02X}")
+                    if self.debug:
+                        print(f"Received Arduino command: 0x{command:02X}")
 
                     # Process command and send response
                     self._process_arduino_command(command)
@@ -595,12 +895,12 @@ class FalconBMSMulticastClient:
                 response_data = struct.pack('<I', self.flight_data.get('lightBits', 0))
 
             elif command == 0x02:  # lightBits2
-                response_data = struct.pack('<I', self.flight_data2.get('lightBits2', 0))
+                response_data = struct.pack('<I', self.flight_data.get('lightBits2', 0))
 
             elif command == 0x03:  # lightBits3
-                response_data = struct.pack('<I', self.flight_data2.get('lightBits3', 0))
+                response_data = struct.pack('<I', self.flight_data.get('lightBits3', 0))
 
-            elif command == 0x04:  # blinkBits
+            elif command == 0x04:  # blinkBits (from FlightData2)
                 response_data = struct.pack('<I', self.flight_data2.get('blinkBits', 0))
 
             elif command == 0x05:  # DED Lines (merged 120 bytes)
@@ -616,8 +916,8 @@ class FalconBMSMulticastClient:
             elif command == 0x06:  # fuelFlow
                 response_data = struct.pack('<f', self.flight_data.get('fuelFlow', 0.0))
 
-            elif command == 0x07:  # instrLight
-                response_data = struct.pack('<B', self.flight_data2.get('instrLight', 0))
+            elif command == 0x07:  # instrLight (from FlightData2)
+                response_data = struct.pack('<I', self.flight_data2.get('instrLight', 0))
 
             elif command == 0x08:  # PFL Lines (merged 120 bytes)
                 merged_pfl = bytearray(120)
@@ -635,8 +935,8 @@ class FalconBMSMulticastClient:
             elif command == 0x10:  # flareCount
                 response_data = struct.pack('<f', self.flight_data.get('flareCount', 0.0))
 
-            elif command == 0x11:  # floodConsole
-                response_data = struct.pack('<B', self.flight_data2.get('floodConsole', 0))
+            elif command == 0x11:  # floodConsole (send 0x00 as per C# code)
+                response_data = bytes([0x00])  # C# sends hardcoded 0x00
 
             elif command == 0x12:  # rpm
                 response_data = struct.pack('<f', self.flight_data.get('rpm', 0.0))
@@ -687,10 +987,10 @@ class FalconBMSMulticastClient:
             elif command == 0x27:  # cmdsMode
                 response_data = struct.pack('<i', self.flight_data2.get('cmdsMode', 0))
 
-            elif command == 0x28:  # uhf_panel_preset
+            elif command == 0x28:  # BupUhfPreset
                 response_data = struct.pack('<i', self.flight_data2.get('uhf_panel_preset', 0))
 
-            elif command == 0x29:  # uhf_panel_frequency
+            elif command == 0x29:  # BupUhfFreq
                 response_data = struct.pack('<i', self.flight_data2.get('uhf_panel_frequency', 0))
 
             elif command == 0x30:  # speedBrake
@@ -729,6 +1029,166 @@ class FalconBMSMulticastClient:
             elif command == 0x41:  # bearingToBeacon
                 response_data = struct.pack('<f', self.flight_data.get('bearingToBeacon', 0.0))
 
+            elif command == 0x42:  # currentHeading
+                response_data = struct.pack('<f', self.flight_data.get('currentHeading', 0.0))
+
+            elif command == 0x43:  # desiredHeading
+                response_data = struct.pack('<f', self.flight_data.get('desiredHeading', 0.0))
+
+            elif command == 0x44:  # gearPos
+                response_data = struct.pack('<f', self.flight_data.get('gearPos', 0.0))
+
+            elif command == 0x45:  # noseGearPos
+                response_data = struct.pack('<f', self.flight_data.get('noseGearPos', 0.0))
+
+            elif command == 0x46:  # leftGearPos
+                response_data = struct.pack('<f', self.flight_data.get('leftGearPos', 0.0))
+
+            elif command == 0x47:  # rightGearPos
+                response_data = struct.pack('<f', self.flight_data.get('rightGearPos', 0.0))
+
+            elif command == 0x48:  # trimPitch
+                response_data = struct.pack('<f', self.flight_data.get('trimPitch', 0.0))
+
+            elif command == 0x49:  # trimRoll
+                response_data = struct.pack('<f', self.flight_data.get('trimRoll', 0.0))
+
+            elif command == 0x50:  # trimYaw
+                response_data = struct.pack('<f', self.flight_data.get('trimYaw', 0.0))
+
+            elif command == 0x51:  # hsiBits
+                response_data = struct.pack('<I', self.flight_data.get('hsiBits', 0))
+
+            elif command == 0x52:  # versionNum (FlightData)
+                response_data = struct.pack('<i', self.flight_data.get('versionNum', 0))
+
+            elif command == 0x53:  # mainPower
+                response_data = struct.pack('<i', self.flight_data.get('mainPower', 0))
+
+            elif command == 0x54:  # alpha (angle of attack)
+                response_data = struct.pack('<f', self.flight_data.get('alpha', 0.0))
+
+            elif command == 0x55:  # beta (side slip angle)
+                response_data = struct.pack('<f', self.flight_data.get('beta', 0.0))
+
+            elif command == 0x56:  # mach number
+                response_data = struct.pack('<f', self.flight_data.get('mach', 0.0))
+
+            elif command == 0x57:  # vt (true airspeed)
+                response_data = struct.pack('<f', self.flight_data.get('vt', 0.0))
+
+            elif command == 0x58:  # gs (G-force)
+                response_data = struct.pack('<f', self.flight_data.get('gs', 0.0))
+
+            elif command == 0x59:  # windOffset
+                response_data = struct.pack('<f', self.flight_data.get('windOffset', 0.0))
+
+            elif command == 0x60:  # position X
+                response_data = struct.pack('<f', self.flight_data.get('x', 0.0))
+
+            elif command == 0x61:  # position Y
+                response_data = struct.pack('<f', self.flight_data.get('y', 0.0))
+
+            elif command == 0x62:  # position Z
+                response_data = struct.pack('<f', self.flight_data.get('z', 0.0))
+
+            elif command == 0x63:  # pitch
+                response_data = struct.pack('<f', self.flight_data.get('pitch', 0.0))
+
+            elif command == 0x64:  # roll
+                response_data = struct.pack('<f', self.flight_data.get('roll', 0.0))
+
+            elif command == 0x65:  # yaw
+                response_data = struct.pack('<f', self.flight_data.get('yaw', 0.0))
+
+            # FlightData2 specific commands (0x70-0x9F)
+            elif command == 0x70:  # AAUZ (barometric altitude)
+                response_data = struct.pack('<f', self.flight_data2.get('AAUZ', 0.0))
+
+            elif command == 0x71:  # navMode
+                response_data = struct.pack('<B', self.flight_data2.get('navMode', 0))
+
+            elif command == 0x72:  # altBits
+                response_data = struct.pack('<I', self.flight_data2.get('altBits', 0))
+
+            elif command == 0x73:  # powerBits
+                response_data = struct.pack('<I', self.flight_data2.get('powerBits', 0))
+
+            elif command == 0x74:  # bettyBits
+                response_data = struct.pack('<I', self.flight_data2.get('bettyBits', 0))
+
+            elif command == 0x75:  # miscBits
+                response_data = struct.pack('<I', self.flight_data2.get('miscBits', 0))
+
+            elif command == 0x76:  # RALT (radar altitude)
+                response_data = struct.pack('<f', self.flight_data2.get('RALT', 0.0))
+
+            elif command == 0x77:  # bingoFuel
+                response_data = struct.pack('<f', self.flight_data2.get('bingoFuel', 0.0))
+
+            elif command == 0x78:  # turnRate
+                response_data = struct.pack('<f', self.flight_data2.get('turnRate', 0.0))
+
+            elif command == 0x79:  # lefPos (Leading Edge Flaps)
+                response_data = struct.pack('<f', self.flight_data2.get('lefPos', 0.0))
+
+            elif command == 0x80:  # tefPos (Trailing Edge Flaps)
+                response_data = struct.pack('<f', self.flight_data2.get('tefPos', 0.0))
+
+            elif command == 0x81:  # vtolPos
+                response_data = struct.pack('<f', self.flight_data2.get('vtolPos', 0.0))
+
+            elif command == 0x82:  # bumpIntensity
+                response_data = struct.pack('<f', self.flight_data2.get('bumpIntensity', 0.0))
+
+            elif command == 0x83:  # latitude
+                response_data = struct.pack('<f', self.flight_data2.get('latitude', 0.0))
+
+            elif command == 0x84:  # longitude
+                response_data = struct.pack('<f', self.flight_data2.get('longitude', 0.0))
+
+            elif command == 0x85:  # bullseyeX
+                response_data = struct.pack('<f', self.flight_data2.get('bullseyeX', 0.0))
+
+            elif command == 0x86:  # bullseyeY
+                response_data = struct.pack('<f', self.flight_data2.get('bullseyeY', 0.0))
+
+            elif command == 0x87:  # BMSVersionMajor
+                response_data = struct.pack('<i', self.flight_data2.get('BMSVersionMajor', 0))
+
+            elif command == 0x88:  # BMSVersionMinor
+                response_data = struct.pack('<i', self.flight_data2.get('BMSVersionMinor', 0))
+
+            elif command == 0x89:  # magDeviationSystem
+                response_data = struct.pack('<f', self.flight_data2.get('magDeviationSystem', 0.0))
+
+            elif command == 0x90:  # magDeviationReal
+                response_data = struct.pack('<f', self.flight_data2.get('magDeviationReal', 0.0))
+
+            elif command == 0x91:  # ecmOper
+                response_data = struct.pack('<B', self.flight_data2.get('ecmOper', 0))
+
+            elif command == 0x92:  # tacan_ils_frequency
+                response_data = struct.pack('<i', self.flight_data2.get('tacan_ils_frequency', 0))
+
+            elif command == 0x93:  # desired_RTT_FPS
+                response_data = struct.pack('<i', self.flight_data2.get('desired_RTT_FPS', 0))
+
+            elif command == 0x94:  # sideSlipdeg
+                response_data = struct.pack('<f', self.flight_data2.get('sideSlipdeg', 0.0))
+
+            elif command == 0x95:  # RWR object count
+                response_data = struct.pack('<i', self.flight_data.get('rwrObjectCount', 0))
+
+            elif command == 0x96:  # pilots online count
+                response_data = struct.pack('<B', self.flight_data2.get('pilotsOnline', 0))
+
+            elif command == 0x97:  # currentTime
+                response_data = struct.pack('<i', self.flight_data2.get('currentTime', 0))
+
+            elif command == 0x98:  # vehicleACD
+                response_data = struct.pack('<h', self.flight_data2.get('vehicleACD', 0))
+
             elif command == 0x99:  # Packet Failed
                 print("Arduino reported packet checksum failure")
                 return  # Don't send response
@@ -765,7 +1225,8 @@ class FalconBMSMulticastClient:
 
             # Send packet
             self.arduino_serial.write(packet)
-            print(f"Sent Arduino response for type 0x{command_type:02X}, length={len(data)}")
+            if self.debug:
+                print(f"Sent Arduino response for type 0x{command_type:02X}, length={len(data)}")
 
         except Exception as e:
             print(f"Error sending Arduino response: {e}")
@@ -836,6 +1297,8 @@ def main():
                        help='Arduino serial port (e.g., /dev/ttyUSB0)')
     parser.add_argument('--list-ports', action='store_true',
                        help='List available serial ports and exit')
+    parser.add_argument('--debug', action='store_true',
+                       help='Enable debug output for Arduino communication')
 
     args = parser.parse_args()
 
@@ -847,7 +1310,8 @@ def main():
     client = FalconBMSMulticastClient(
         multicast_group=args.multicast_group,
         port=args.port,
-        arduino_port=args.arduino_port
+        arduino_port=args.arduino_port,
+        debug=args.debug
     )
 
     try:
