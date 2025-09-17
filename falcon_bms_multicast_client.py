@@ -214,11 +214,12 @@ class FlightData2Parser:
 class FalconBMSMulticastClient:
     """Main client class for receiving BMS multicast data and communicating with Arduino"""
 
-    def __init__(self, multicast_group: str, port: int, arduino_port: str = None, debug: bool = False):
+    def __init__(self, multicast_group: str, port: int, arduino_port: str = None, debug: bool = False, print_data: bool = False):
         self.multicast_group = multicast_group
         self.port = port
         self.arduino_port = arduino_port
         self.debug = debug
+        self.print_data = print_data
 
         # Multicast socket
         self.socket = None
@@ -675,6 +676,14 @@ class FalconBMSMulticastClient:
                     'mainPower': final_data[4]
                 })
 
+            # Print key flight data if requested
+            if self.print_data:
+                print(f"FlightData - RPM: {self.flight_data.get('rpm', 0):.1f}, "
+                      f"Fuel Flow: {self.flight_data.get('fuelFlow', 0):.1f}, "
+                      f"Internal Fuel: {self.flight_data.get('internalFuel', 0):.1f}, "
+                      f"KIAS: {self.flight_data.get('kias', 0):.1f}, "
+                      f"Mach: {self.flight_data.get('mach', 0):.2f}")
+
         except Exception as e:
             print(f"Error parsing FlightData: {e}")
 
@@ -873,6 +882,13 @@ class FalconBMSMulticastClient:
                 })
                 offset += 8
 
+            # Print key flight data2 if requested
+            if self.print_data:
+                print(f"FlightData2 - Cabin Alt: {self.flight_data2.get('cabinAlt', 0):.1f}, "
+                      f"Fuel Flow 2: {self.flight_data2.get('fuelFlow2', 0):.1f}, "
+                      f"RPM 2: {self.flight_data2.get('rpm2', 0):.1f}, "
+                      f"Oil Pressure 2: {self.flight_data2.get('oilPressure2', 0):.1f}")
+
         except Exception as e:
             print(f"Error parsing FlightData2: {e}")
 
@@ -882,7 +898,8 @@ class FalconBMSMulticastClient:
             if len(data) >= 32:
                 # Parse basic structure
                 values = struct.unpack('<BBBBBB', data[0:6])
-                print(f"IntellivibeData: AA missiles={values[0]}, Bullets={values[5]}")
+                if self.print_data:
+                    print(f"IntellivibeData: AA missiles={values[0]}, Bullets={values[5]}")
         except Exception as e:
             print(f"Error parsing IntellivibeData: {e}")
 
@@ -1326,6 +1343,8 @@ def main():
                        help='List available serial ports and exit')
     parser.add_argument('--debug', action='store_true',
                        help='Enable debug output for Arduino communication')
+    parser.add_argument('--print-data', action='store_true',
+                       help='Print received multicast data values')
 
     args = parser.parse_args()
 
@@ -1338,7 +1357,8 @@ def main():
         multicast_group=args.multicast_group,
         port=args.port,
         arduino_port=args.arduino_port,
-        debug=args.debug
+        debug=args.debug,
+        print_data=args.print_data
     )
 
     try:
