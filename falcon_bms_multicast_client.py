@@ -232,6 +232,7 @@ class FalconBMSMulticastClient:
         self.flight_data: Dict[str, Any] = {}
         self.flight_data2: Dict[str, Any] = {}
         self.last_sequence = 0
+        self.first_packet_received = False
 
         # Threading
         self.multicast_thread = None
@@ -266,9 +267,11 @@ class FalconBMSMulticastClient:
         self.running = False
 
         if self.socket:
+            print("✗ Disconnecting from multicast group...")
             self.socket.close()
 
         if self.arduino_serial:
+            print("✗ Disconnecting from Arduino...")
             self.arduino_serial.close()
 
         if self.multicast_thread:
@@ -277,7 +280,7 @@ class FalconBMSMulticastClient:
         if self.arduino_thread:
             self.arduino_thread.join(timeout=1.0)
 
-        print("Client stopped")
+        print("✓ Client stopped")
 
     def _setup_multicast(self):
         """Setup UDP multicast reception"""
@@ -296,10 +299,10 @@ class FalconBMSMulticastClient:
             # Set socket timeout for clean shutdown
             self.socket.settimeout(1.0)
 
-            print(f"Multicast socket setup complete: {self.multicast_group}:{self.port}")
+            print(f"✓ Connected to multicast group: {self.multicast_group}:{self.port}")
 
         except Exception as e:
-            print(f"Failed to setup multicast: {e}")
+            print(f"✗ Failed to connect to multicast group {self.multicast_group}:{self.port}: {e}")
             sys.exit(1)
 
     def _setup_arduino(self):
@@ -387,12 +390,17 @@ class FalconBMSMulticastClient:
 
     def _multicast_loop(self):
         """Main loop for receiving multicast data"""
-        print("Multicast receive loop started")
+        print("✓ Multicast receive loop started - listening for BMS data...")
 
         while self.running:
             try:
                 # Receive multicast packet
                 data, addr = self.socket.recvfrom(65536)  # Max UDP packet size
+
+                # Show first packet received message
+                if not self.first_packet_received:
+                    print(f"✓ First BMS data packet received from {addr[0]}")
+                    self.first_packet_received = True
 
                 # Parse header
                 header = self._parse_header(data)
@@ -419,7 +427,8 @@ class FalconBMSMulticastClient:
                 continue  # Normal timeout, check running flag
             except Exception as e:
                 if self.running:
-                    print(f"Multicast receive error: {e}")
+                    print(f"✗ Multicast receive error: {e}")
+                    print("✗ Lost connection to multicast group")
 
     def _parse_header(self, data: bytes) -> Optional[MulticastHeader]:
         """Parse multicast packet header"""

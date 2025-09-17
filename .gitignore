@@ -1,0 +1,8 @@
+# Ignore everything
+*
+
+# But don't ignore the falcon multicast client
+!falcon_bms_multicast_client.py
+
+# Don't ignore .gitignore itself
+!.gitignore
